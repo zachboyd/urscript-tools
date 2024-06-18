@@ -1,26 +1,39 @@
-FROM ubuntu:18.04
+FROM i386/debian:8.9
 
 ARG ROBOT=UR10
 ARG SIMULATOR_DIR=/ursimulator
-ARG SIMULATOR_DOWNLOAD_URL=https://s3-eu-west-1.amazonaws.com/ur-support-site/51847/URSim_Linux-5.3.1.64192.tar.gz
+ARG SIMULATOR_DOWNLOAD_URL=https://s3-eu-west-1.amazonaws.com/ur-support-site/222846/URSim_Linux-5.16.1.127999.tar.gz
 
-RUN apt-get clean
-RUN apt-get update
-RUN apt-get install -y xterm xvfb sudo wget lib32gcc1 lib32stdc++6 libc6-i386 git nodejs npm libcap2-bin
+# The "jessie" debian version is outdated and no longer receives updates.
+# To continue using it, we must tell apt to use archive sources and ignore expirations.
+# https://unix.stackexchange.com/questions/508724/failed-to-fetch-jessie-backports-repository/508948#508948
+COPY config/sources.list /etc/apt/sources.list
+COPY config/apt.conf /etc/apt/apt.conf
+
+RUN apt-get update -y &&\
+    apt-get install -y --force-yes sudo wget libgcc1 libstdc++6 libc6
 RUN ln -s /usr/bin/sudo /usr/bin/pkexec
 
-RUN mkdir -p $SIMULATOR_DIR
-RUN mkdir -p /root/Desktop
+RUN mkdir -p $SIMULATOR_DIR && mkdir -p /root/Desktop
 
 WORKDIR $SIMULATOR_DIR
 
-RUN echo Download Simulator - $SIMULATOR_DOWNLOAD_URL
-RUN wget -nc $SIMULATOR_DOWNLOAD_URL
+RUN echo "Downloading Simulator - $SIMULATOR_DOWNLOAD_URL" && wget -nc $SIMULATOR_DOWNLOAD_URL
 RUN export SIMULATOR_FILE=$(basename $SIMULATOR_DOWNLOAD_URL) && tar --strip-components=2 -xvf $SIMULATOR_FILE
 
-RUN xvfb-run ./install.sh
+# optimize container by not installing dependencies that are not necessary
+# to run the controller
+RUN sed -i 's/^\s*needToInstallJava$/#needToInstallJava/' install.sh &&\
+    sed -i 's/^\s*installDaemonManager$/#installDaemonManager/' install.sh &&\
+    sed -i 's/^\s*tty -s$/#tty -s/' install.sh &&\
+    sed -i 's/^\s*pushd/#pushd/' install.sh &&\
+    sed -i 's/^\s*chmod/#chmod/' install.sh &&\
+    sed -i 's/^\s*popd/#popd/' install.sh &&\
+    sed -i 's/apt-get -y/apt-get -y --force-yes/g' install.sh
 
-# Following enables modbus server to be launched by the URControl process
+RUN HOME=/root DEBIAN_FRONTEND="noninteractive" ./install.sh
+
+# enables modbus server to be launched by the URControl process
 RUN sudo setcap cap_net_bind_service+ep URControl
 RUN echo "/opt/urtool-3.0/lib/" > /etc/ld.so.conf.d/77urcontrol.conf
 RUN ldconfig
